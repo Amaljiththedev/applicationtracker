@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-import jwt
+import requests
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -10,32 +10,35 @@ security = HTTPBearer()
 
 class AuthService:
     def __init__(self) -> None:
-        self.jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
+        self.supabase_url = os.getenv("SUPABASE_URL")
+        self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-    def decode_access_token(self, token: str) -> dict[str, Any]:
-        if not self.jwt_secret:
+    def fetch_user_from_supabase(self, token: str) -> dict[str, Any]:
+        if not self.supabase_url or not self.supabase_service_role_key:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Backend missing SUPABASE_JWT_SECRET",
+                detail="Backend missing Supabase configuration",
             )
-        try:
-            payload = jwt.decode(
-                token,
-                self.jwt_secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
-            )
-            return payload
-        except jwt.PyJWTError as error:
+
+        response = requests.get(
+            f"{self.supabase_url}/auth/v1/user",
+            headers={
+                "apikey": self.supabase_service_role_key,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10,
+        )
+        if response.status_code != 200:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired token",
-            ) from error
+            )
+        return response.json()
 
     def get_current_user(self, token: str) -> dict[str, Any]:
-        payload = self.decode_access_token(token)
-        user_id = payload.get("sub")
-        email = payload.get("email")
+        user_data = self.fetch_user_from_supabase(token)
+        user_id = user_data.get("id")
+        email = user_data.get("email")
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
